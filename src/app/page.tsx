@@ -26,6 +26,7 @@ export default function Home() {
   const [editingComment, setEditingComment] = useState<{ itemId: string; commentId: string; text: string } | null>(null);
   const [commentPhoto, setCommentPhoto] = useState<{ url: string; fileId: string; name: string; itemId: string } | null>(null);
   const [uploadingItemId, setUploadingItemId] = useState<string | null>(null);
+  const [expandedPhoto, setExpandedPhoto] = useState<{ url: string; alt: string } | null>(null);
 
   useEffect(() => {
     fetchItems();
@@ -513,7 +514,10 @@ export default function Home() {
                     <div className="mt-4">
                       {item.photoUrl ? (
                         <div className="relative group">
-                          <div className="relative w-full h-[300px]">
+                          <div 
+                            className="relative w-full h-[300px] cursor-pointer"
+                            onClick={() => setExpandedPhoto({ url: item.photoUrl!, alt: item.title })}
+                          >
                             <Image
                               src={item.photoUrl}
                               alt={item.title}
@@ -528,7 +532,10 @@ export default function Home() {
                             />
                             {item.suggestedByEmail === user?.email && (
                               <button
-                                onClick={() => handleDeletePhoto(item)}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDeletePhoto(item);
+                                }}
                                 className="absolute top-2 right-2 bg-red-500 text-white p-2 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
                               >
                                 <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
@@ -685,7 +692,10 @@ export default function Home() {
                                       <p className="text-sm text-gray-600 mt-1 whitespace-pre-wrap">{comment.text}</p>
                                       {comment.photoUrl && (
                                         <div className="mt-2 relative group">
-                                          <div className="relative w-full h-[200px]">
+                                          <div 
+                                            className="relative w-full h-[200px] cursor-pointer"
+                                            onClick={() => setExpandedPhoto({ url: comment.photoUrl!, alt: 'Comment photo' })}
+                                          >
                                             <Image
                                               src={comment.photoUrl}
                                               alt="Comment photo"
@@ -696,7 +706,10 @@ export default function Home() {
                                             />
                                             {comment.authorEmail === user.email && (
                                               <button
-                                                onClick={() => handleDeleteCommentPhoto(item.id, comment.id)}
+                                                onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  handleDeleteCommentPhoto(item.id, comment.id);
+                                                }}
                                                 className="absolute top-2 right-2 bg-red-500 text-white p-2 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
                                               >
                                                 <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
@@ -742,6 +755,33 @@ export default function Home() {
             ))
           )}
         </div>
+
+        {/* Expanded Photo Modal */}
+        {expandedPhoto && (
+          <div 
+            className="fixed inset-0 bg-black bg-opacity-75 z-50 flex items-center justify-center p-4"
+            onClick={() => setExpandedPhoto(null)}
+          >
+            <div className="relative max-w-[90vw] max-h-[90vh]">
+              <Image
+                src={expandedPhoto.url}
+                alt={expandedPhoto.alt}
+                width={1920}
+                height={1080}
+                className="rounded-lg object-contain max-h-[90vh]"
+                unoptimized
+              />
+              <button
+                onClick={() => setExpandedPhoto(null)}
+                className="absolute top-4 right-4 bg-white bg-opacity-50 hover:bg-opacity-75 text-black p-2 rounded-full"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
