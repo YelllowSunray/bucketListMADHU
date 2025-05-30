@@ -8,19 +8,22 @@ interface ImageKitUploadProps {
   onUpload: (result: { url: string; fileId: string; name: string }) => void;
   className?: string;
   buttonText?: string;
+  itemId: string;
 }
 
 export default function ImageKitUpload({
   onUpload,
   className = "flex items-center gap-2 text-sm text-gray-500 hover:text-gray-700",
-  buttonText = "Add Photo"
+  buttonText = "Add Photo",
+  itemId
 }: ImageKitUploadProps) {
   const [isUploading, setIsUploading] = useState(false);
+  const inputId = `imagekit-upload-${itemId}`;
 
   const handleFileUpload = async (file: File) => {
     try {
       setIsUploading(true);
-      console.log('Starting file upload:', {
+      console.log('Starting file upload for item:', itemId, {
         fileName: file.name,
         fileSize: file.size,
         fileType: file.type
@@ -37,11 +40,11 @@ export default function ImageKitUpload({
       }
 
       const result = await handleImageUpload(file);
-      console.log('Upload successful:', result);
+      console.log('Upload successful for item:', itemId, result);
       onUpload(result);
       toast.success('Photo uploaded successfully!');
     } catch (error) {
-      console.error('Upload error:', error);
+      console.error('Upload error for item:', itemId, error);
       toast.error(error instanceof Error ? error.message : 'Failed to upload photo. Please try again.');
     } finally {
       setIsUploading(false);
@@ -60,11 +63,11 @@ export default function ImageKitUpload({
           }
         }}
         className="hidden"
-        id="imagekit-upload"
+        id={inputId}
         disabled={isUploading}
       />
       <label
-        htmlFor="imagekit-upload"
+        htmlFor={inputId}
         className="flex items-center gap-2 cursor-pointer"
       >
         <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">

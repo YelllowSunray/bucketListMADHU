@@ -27,6 +27,7 @@ export default function Home() {
   const [commentPhoto, setCommentPhoto] = useState<{ url: string; fileId: string; name: string; itemId: string } | null>(null);
   const [uploadingItemId, setUploadingItemId] = useState<string | null>(null);
   const [expandedPhoto, setExpandedPhoto] = useState<{ url: string; alt: string } | null>(null);
+  const [uploadComponentKey, setUploadComponentKey] = useState(0);
 
   useEffect(() => {
     fetchItems();
@@ -135,60 +136,91 @@ export default function Home() {
   };
 
   const handlePhotoUpload = async (item: BucketListItem, result: any) => {
-    if (!user) return;
+    if (!user) {
+      console.error('No user found when trying to upload photo');
+      return;
+    }
     
     try {
-      console.log('Starting photo upload handler for item:', item.id);
-      console.log('Full upload result:', JSON.stringify(result, null, 2));
+      console.log('=== PHOTO UPLOAD DEBUG ===');
+      console.log('1. Starting photo upload handler');
+      console.log('Target item:', {
+        id: item.id,
+        title: item.title,
+        suggestedBy: item.suggestedBy,
+        suggestedByEmail: item.suggestedByEmail
+      });
+      console.log('Current user:', {
+        email: user.email,
+        displayName: user.displayName
+      });
+      console.log('Upload result:', result);
       
-      if (!result.info || !result.info.secure_url) {
+      if (!result.url || !result.fileId) {
         console.error('Invalid upload result:', result);
         toast.error('Invalid upload result. Please try again.');
         return;
       }
 
-      const photoUrl = result.info.secure_url;
-      const publicId = result.info.public_id;
+      const photoUrl = result.url;
+      const fileId = result.fileId;
       
-      console.log('Photo URL:', photoUrl);
-      console.log('Public ID:', publicId);
-      console.log('Target item ID:', item.id);
+      console.log('2. Preparing to update Firestore');
+      console.log('Photo details:', {
+        url: photoUrl,
+        fileId: fileId,
+        targetItemId: item.id
+      });
       
       // Get the current item to verify it exists
       const itemRef = doc(db, 'bucketlist', item.id);
+      console.log('3. Fetching current item from Firestore');
       const itemDoc = await getDoc(itemRef);
       
       if (!itemDoc.exists()) {
+        console.error('Item not found in Firestore:', item.id);
         throw new Error('Item not found');
       }
+
+      console.log('4. Current item data:', itemDoc.data());
 
       // Update the item in Firestore
       const updateData = { 
         photoUrl,
         photoMetadata: {
-          publicId,
+          fileId,
           uploadedAt: new Date(),
           uploadedBy: user.email,
-          fileType: result.info.format,
-          itemId: item.id // Store the item ID in metadata
+          fileType: result.name.split('.').pop() || 'jpg',
+          itemId: item.id
         }
       };
       
-      console.log('Updating Firestore with:', updateData);
+      console.log('5. Updating Firestore with:', updateData);
       
       await updateDoc(itemRef, updateData);
+      console.log('6. Firestore update successful');
       
       // Show success message
       toast.success('Photo uploaded successfully!');
       
       // Refresh the items list
+      console.log('7. Refreshing items list');
       await fetchItems();
       
       // Log the updated item
       const updatedItem = await getDoc(itemRef);
-      console.log('Updated item:', updatedItem.data());
-    } catch (error) {
+      console.log('8. Updated item data:', updatedItem.data());
+      console.log('=== END PHOTO UPLOAD DEBUG ===');
+    } catch (error: unknown) {
       console.error('Error uploading photo:', error);
+      if (error instanceof Error) {
+        console.error('Error details:', {
+          name: error.name,
+          message: error.message,
+          stack: error.stack
+        });
+      }
       toast.error('Failed to upload photo. Please try again.');
     } finally {
       setUploadingItemId(null);
@@ -217,11 +249,18 @@ export default function Home() {
   };
 
   const handleAddComment = async (itemId: string) => {
-    if (!user || (!newComment.trim() && !commentPhoto)) return;
+    if (!user) {
+      console.error('No user found when trying to add comment');
+      return;
+    }
 
-    console.log('Adding comment to item:', itemId, {
-      text: newComment.trim(),
-      photo: commentPhoto
+    console.log('Starting to add comment:', {
+      itemId,
+      user: user.email,
+      hasText: !!newComment.trim(),
+      hasPhoto: !!commentPhoto,
+      commentText: newComment.trim(),
+      photoData: commentPhoto
     });
 
     try {
@@ -230,11 +269,15 @@ export default function Home() {
       const itemDoc = await getDoc(itemRef);
       
       if (!itemDoc.exists()) {
+        console.error('Item not found:', itemId);
         throw new Error('Item not found');
       }
 
+      console.log('Found item:', itemDoc.data());
+
       // Get current comments or initialize empty array
       const currentComments = itemDoc.data().comments || [];
+      console.log('Current comments:', currentComments);
       
       // Create the new comment
       const newCommentObj: Comment = {
@@ -254,13 +297,23 @@ export default function Home() {
         })
       };
 
+      console.log('New comment object:', newCommentObj);
+
       // Add the new comment to the array
       const updatedComments = [...currentComments, newCommentObj];
+      console.log('Updated comments array:', updatedComments);
 
       // Update the document
+      console.log('Updating Firestore document:', {
+        itemId,
+        commentsCount: updatedComments.length
+      });
+
       await updateDoc(itemRef, {
         comments: updatedComments
       });
+      
+      console.log('Successfully updated Firestore');
 
       // Clear the form
       setNewComment('');
@@ -269,10 +322,16 @@ export default function Home() {
 
       // Refresh the items
       await fetchItems();
+      console.log('Successfully refreshed items');
 
       toast.success('Comment added successfully');
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error adding comment:', error);
+      console.error('Error details:', {
+        name: error?.name,
+        message: error?.message,
+        stack: error?.stack
+      });
       toast.error('Failed to add comment');
     }
   };
@@ -549,23 +608,41 @@ export default function Home() {
                         <div className="mt-2">
                           {user && item.suggestedByEmail === user.email && (
                             <ImageKitUpload
-                              key={`upload-${item.id}-${Date.now()}`}
+                              key={`upload-${item.id}-${uploadComponentKey}`}
+                              itemId={item.id}
                               onUpload={async (result) => {
                                 try {
-                                  setUploadingItemId(item.id);
-                                  console.log('Upload result for item:', item.id, result);
-                                  await handlePhotoUpload(item, {
-                                    info: {
-                                      secure_url: result.url,
-                                      public_id: result.fileId,
-                                      format: result.name.split('.').pop()
-                                    }
+                                  console.log('=== IMAGEKIT UPLOAD DEBUG ===');
+                                  console.log('1. ImageKit upload completed');
+                                  console.log('Target item:', {
+                                    id: item.id,
+                                    title: item.title,
+                                    suggestedBy: item.suggestedBy
                                   });
-                                } catch (error) {
+                                  console.log('Upload result:', result);
+                                  
+                                  setUploadingItemId(item.id);
+                                  console.log('2. Setting uploading item ID:', item.id);
+                                  
+                                  await handlePhotoUpload(item, result);
+                                  console.log('3. Photo upload handler completed');
+                                  
+                                  // Increment the key to force a re-render of the upload component
+                                  setUploadComponentKey(prev => prev + 1);
+                                } catch (error: unknown) {
                                   console.error('Error handling upload:', error);
+                                  if (error instanceof Error) {
+                                    console.error('Error details:', {
+                                      name: error.name,
+                                      message: error.message,
+                                      stack: error.stack
+                                    });
+                                  }
                                   toast.error('Failed to process upload. Please try again.');
                                 } finally {
                                   setUploadingItemId(null);
+                                  console.log('4. Reset uploading item ID');
+                                  console.log('=== END IMAGEKIT UPLOAD DEBUG ===');
                                 }
                               }}
                               buttonText={uploadingItemId === item.id ? "Uploading..." : "Add Photo"}
