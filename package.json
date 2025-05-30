@@ -12,6 +12,7 @@
     "@cloudinary/url-gen": "^1.21.0",
     "@types/firebase": "^2.4.32",
     "firebase": "^11.8.1",
+    "imagekit": "^6.0.0",
     "next": "15.3.3",
     "next-cloudinary": "^6.16.0",
     "react": "^19.0.0",

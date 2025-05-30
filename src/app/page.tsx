@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, arrayUnion, arrayRemove } from 'firebase/firestore';
+import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, arrayUnion, arrayRemove, getDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { BucketListItem, Comment } from '@/types/bucketlist';
 import { useAuth } from '@/context/AuthContext';
@@ -10,6 +10,10 @@ import Image from 'next/image';
 import { toast } from 'react-hot-toast';
 import { CldUploadButton } from 'next-cloudinary';
 import { getImageUrl } from '@/lib/cloudinary';
+import CloudinaryUpload from '@/components/CloudinaryUpload';
+import { handleImageUpload } from '@/lib/cloudinary';
+import PhotoUploadManager from '@/components/PhotoUploadManager';
+import ImageKitUpload from '@/components/ImageKitUpload';
 
 export default function Home() {
   const { user, signOut } = useAuth();
@@ -20,6 +24,8 @@ export default function Home() {
   const [newComment, setNewComment] = useState('');
   const [commentingItemId, setCommentingItemId] = useState<string | null>(null);
   const [editingComment, setEditingComment] = useState<{ itemId: string; commentId: string; text: string } | null>(null);
+  const [commentPhoto, setCommentPhoto] = useState<{ url: string; fileId: string; name: string; itemId: string } | null>(null);
+  const [uploadingItemId, setUploadingItemId] = useState<string | null>(null);
 
   useEffect(() => {
     fetchItems();
@@ -131,7 +137,7 @@ export default function Home() {
     if (!user) return;
     
     try {
-      console.log('Starting photo upload handler');
+      console.log('Starting photo upload handler for item:', item.id);
       console.log('Full upload result:', JSON.stringify(result, null, 2));
       
       if (!result.info || !result.info.secure_url) {
@@ -145,7 +151,16 @@ export default function Home() {
       
       console.log('Photo URL:', photoUrl);
       console.log('Public ID:', publicId);
+      console.log('Target item ID:', item.id);
       
+      // Get the current item to verify it exists
+      const itemRef = doc(db, 'bucketlist', item.id);
+      const itemDoc = await getDoc(itemRef);
+      
+      if (!itemDoc.exists()) {
+        throw new Error('Item not found');
+      }
+
       // Update the item in Firestore
       const updateData = { 
         photoUrl,
@@ -153,22 +168,29 @@ export default function Home() {
           publicId,
           uploadedAt: new Date(),
           uploadedBy: user.email,
-          fileType: result.info.format
+          fileType: result.info.format,
+          itemId: item.id // Store the item ID in metadata
         }
       };
       
       console.log('Updating Firestore with:', updateData);
       
-      await updateDoc(doc(db, 'bucketlist', item.id), updateData);
+      await updateDoc(itemRef, updateData);
       
       // Show success message
       toast.success('Photo uploaded successfully!');
       
       // Refresh the items list
       await fetchItems();
+      
+      // Log the updated item
+      const updatedItem = await getDoc(itemRef);
+      console.log('Updated item:', updatedItem.data());
     } catch (error) {
       console.error('Error uploading photo:', error);
       toast.error('Failed to upload photo. Please try again.');
+    } finally {
+      setUploadingItemId(null);
     }
   };
 
@@ -194,26 +216,71 @@ export default function Home() {
   };
 
   const handleAddComment = async (itemId: string) => {
-    if (!user || !newComment.trim()) return;
+    if (!user || (!newComment.trim() && !commentPhoto)) return;
 
-    const comment: Comment = {
-      id: Date.now().toString(),
+    console.log('Adding comment to item:', itemId, {
       text: newComment.trim(),
-      createdAt: new Date(),
-      authorName: user.displayName || user.email || 'Anonymous',
-      authorEmail: user.email || ''
-    };
+      photo: commentPhoto
+    });
 
     try {
-      await updateDoc(doc(db, 'bucketlist', itemId), {
-        comments: arrayUnion(comment)
+      // Get the current item
+      const itemRef = doc(db, 'bucketlist', itemId);
+      const itemDoc = await getDoc(itemRef);
+      
+      if (!itemDoc.exists()) {
+        throw new Error('Item not found');
+      }
+
+      // Get current comments or initialize empty array
+      const currentComments = itemDoc.data().comments || [];
+      
+      // Create the new comment
+      const newCommentObj: Comment = {
+        id: Date.now().toString(),
+        text: newComment.trim() || '', // Allow empty text
+        createdAt: new Date(),
+        authorName: user.displayName || user.email || 'Anonymous',
+        authorEmail: user.email || '',
+        ...(commentPhoto && {
+          photoUrl: commentPhoto.url,
+          photoMetadata: {
+            fileId: commentPhoto.fileId,
+            uploadedAt: new Date(),
+            uploadedBy: user.email || '',
+            fileType: commentPhoto.name.split('.').pop() || 'jpg'
+          }
+        })
+      };
+
+      // Add the new comment to the array
+      const updatedComments = [...currentComments, newCommentObj];
+
+      // Update the document
+      await updateDoc(itemRef, {
+        comments: updatedComments
       });
+
+      // Clear the form
       setNewComment('');
+      setCommentPhoto(null);
       setCommentingItemId(null);
-      fetchItems();
+
+      // Refresh the items
+      await fetchItems();
+
+      toast.success('Comment added successfully');
     } catch (error) {
       console.error('Error adding comment:', error);
+      toast.error('Failed to add comment');
     }
+  };
+
+  const handleStartComment = (itemId: string) => {
+    // Clear any existing comment state
+    setNewComment('');
+    setCommentPhoto(null);
+    setCommentingItemId(itemId);
   };
 
   const handleEditComment = async (itemId: string, commentId: string, newText: string) => {
@@ -251,6 +318,29 @@ export default function Home() {
       fetchItems();
     } catch (error) {
       console.error('Error deleting comment:', error);
+    }
+  };
+
+  const handleDeleteCommentPhoto = async (itemId: string, commentId: string) => {
+    if (!user) return;
+
+    try {
+      const itemRef = doc(db, 'bucketlist', itemId);
+      const item = items.find(i => i.id === itemId);
+      if (!item) return;
+
+      const updatedComments = item.comments?.map(comment => 
+        comment.id === commentId 
+          ? { ...comment, photoUrl: null, photoMetadata: null }
+          : comment
+      );
+
+      await updateDoc(itemRef, { comments: updatedComments });
+      fetchItems();
+      toast.success('Photo deleted successfully');
+    } catch (error) {
+      console.error('Error deleting comment photo:', error);
+      toast.error('Failed to delete photo');
     }
   };
 
@@ -424,10 +514,6 @@ export default function Home() {
                       {item.photoUrl ? (
                         <div className="relative group">
                           <div className="relative w-full h-[300px]">
-                            {/* Debug info */}
-                            <div className="absolute top-0 left-0 bg-black bg-opacity-50 text-white p-2 text-xs z-10">
-                              Photo URL: {item.photoUrl}
-                            </div>
                             <Image
                               src={item.photoUrl}
                               alt={item.title}
@@ -440,49 +526,44 @@ export default function Home() {
                                 toast.error('Failed to load image');
                               }}
                             />
-                          </div>
-                          {item.suggestedByEmail === user.email && (
-                            <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                            {item.suggestedByEmail === user?.email && (
                               <button
                                 onClick={() => handleDeletePhoto(item)}
-                                className="bg-red-500 text-white p-1 rounded-full hover:bg-red-600"
-                                title="Delete photo"
+                                className="absolute top-2 right-2 bg-red-500 text-white p-2 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
                               >
                                 <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                                  <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                                  <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" />
                                 </svg>
                               </button>
-                            </div>
-                          )}
+                            )}
+                          </div>
                         </div>
                       ) : (
                         <div className="mt-2">
-                          <CldUploadButton
-                            uploadPreset={process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET}
-                            onUpload={(result: any) => {
-                              console.log('Upload result:', result);
-                              if (result.event === 'success') {
-                                handlePhotoUpload(item, result);
-                              }
-                            }}
-                            onError={(error: any) => {
-                              console.error('Upload error:', error);
-                              toast.error('Failed to upload photo. Please try again.');
-                            }}
-                            options={{
-                              maxFiles: 1,
-                              resourceType: "image",
-                              sources: ["local"],
-                              clientAllowedFormats: ["jpg", "jpeg", "png", "gif"],
-                              maxFileSize: 10000000, // 10MB
-                            }}
-                            className="flex items-center gap-2 text-sm text-gray-500 hover:text-gray-700"
-                          >
-                            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                              <path fillRule="evenodd" d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4zm12 12H4l4-8 3 6 2-4 3 6z" clipRule="evenodd" />
-                            </svg>
-                            Add Photo
-                          </CldUploadButton>
+                          {user && item.suggestedByEmail === user.email && (
+                            <ImageKitUpload
+                              key={`upload-${item.id}-${Date.now()}`}
+                              onUpload={async (result) => {
+                                try {
+                                  setUploadingItemId(item.id);
+                                  console.log('Upload result for item:', item.id, result);
+                                  await handlePhotoUpload(item, {
+                                    info: {
+                                      secure_url: result.url,
+                                      public_id: result.fileId,
+                                      format: result.name.split('.').pop()
+                                    }
+                                  });
+                                } catch (error) {
+                                  console.error('Error handling upload:', error);
+                                  toast.error('Failed to process upload. Please try again.');
+                                } finally {
+                                  setUploadingItemId(null);
+                                }
+                              }}
+                              buttonText={uploadingItemId === item.id ? "Uploading..." : "Add Photo"}
+                            />
+                          )}
                         </div>
                       )}
                     </div>
@@ -498,7 +579,7 @@ export default function Home() {
                       <div className="flex justify-between items-center mb-2">
                         <h4 className="font-semibold">Comments</h4>
                         <button
-                          onClick={() => setCommentingItemId(commentingItemId === item.id ? null : item.id)}
+                          onClick={() => handleStartComment(item.id)}
                           className="text-blue-500 text-sm hover:text-blue-600"
                         >
                           {commentingItemId === item.id ? 'Cancel' : 'Add Comment'}
@@ -511,14 +592,55 @@ export default function Home() {
                           <textarea
                             value={newComment}
                             onChange={(e) => setNewComment(e.target.value)}
-                            placeholder="Write a comment..."
+                            placeholder="Write a comment (optional)..."
                             className="w-full p-2 border rounded text-sm whitespace-pre-wrap"
                             rows={2}
                           />
+                          <div className="mt-2">
+                            {commentPhoto ? (
+                              <div className="relative group mb-2">
+                                <div className="relative w-full h-[200px]">
+                                  <Image
+                                    src={commentPhoto.url}
+                                    alt="Comment photo preview"
+                                    fill
+                                    className="rounded-lg object-cover"
+                                    sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
+                                    unoptimized
+                                  />
+                                  <button
+                                    onClick={() => setCommentPhoto(null)}
+                                    className="absolute top-2 right-2 bg-red-500 text-white p-2 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+                                  >
+                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                      <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" />
+                                    </svg>
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              <ImageKitUpload
+                                key={`upload-comment-${item.id}-${Date.now()}`}
+                                onUpload={(result) => {
+                                  console.log('Photo uploaded for comment on item:', item.id, result);
+                                  setCommentPhoto({
+                                    ...result,
+                                    itemId: item.id
+                                  });
+                                }}
+                                buttonText="Add Photo to Comment"
+                              />
+                            )}
+                          </div>
                           <div className="flex justify-end mt-2">
                             <button
                               onClick={() => handleAddComment(item.id)}
-                              className="bg-blue-500 text-white px-3 py-1 text-sm rounded hover:bg-blue-600"
+                              disabled={!newComment.trim() && !commentPhoto}
+                              className={`px-3 py-1 text-sm rounded ${
+                                (newComment.trim() || commentPhoto)
+                                  ? 'bg-blue-500 text-white hover:bg-blue-600' 
+                                  : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                              }`}
                             >
                               Post Comment
                             </button>
@@ -526,6 +648,7 @@ export default function Home() {
                         </div>
                       )}
 
+                      {/* Comments List */}
                       <div className="space-y-3">
                         {item.comments
                           ?.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
@@ -558,7 +681,33 @@ export default function Home() {
                                       </div>
                                     </div>
                                   ) : (
-                                    <p className="text-sm text-gray-600 mt-1 whitespace-pre-wrap">{comment.text}</p>
+                                    <>
+                                      <p className="text-sm text-gray-600 mt-1 whitespace-pre-wrap">{comment.text}</p>
+                                      {comment.photoUrl && (
+                                        <div className="mt-2 relative group">
+                                          <div className="relative w-full h-[200px]">
+                                            <Image
+                                              src={comment.photoUrl}
+                                              alt="Comment photo"
+                                              fill
+                                              className="rounded-lg object-cover"
+                                              sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
+                                              unoptimized
+                                            />
+                                            {comment.authorEmail === user.email && (
+                                              <button
+                                                onClick={() => handleDeleteCommentPhoto(item.id, comment.id)}
+                                                className="absolute top-2 right-2 bg-red-500 text-white p-2 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+                                              >
+                                                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                                  <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" />
+                                                </svg>
+                                              </button>
+                                            )}
+                                          </div>
+                                        </div>
+                                      )}
+                                    </>
                                   )}
                                 </div>
                                 <div className="flex flex-col items-end gap-2">

@@ -4,6 +4,13 @@ export interface Comment {
   createdAt: Date;
   authorName: string;
   authorEmail: string;
+  photoUrl?: string;
+  photoMetadata?: {
+    fileId: string;
+    uploadedAt: Date;
+    uploadedBy: string;
+    fileType: string;
+  };
 }
 
 export interface BucketListItem {
@@ -11,10 +18,17 @@ export interface BucketListItem {
   title: string;
   description: string;
   completed: boolean;
-  photoUrl?: string;
   createdAt: Date;
   completedAt?: Date;
   suggestedBy: string;
   suggestedByEmail: string;
+  photoUrl?: string;
+  photoMetadata?: {
+    publicId: string;
+    uploadedAt: Date;
+    uploadedBy: string;
+    fileType: string;
+    itemId: string;
+  };
   comments?: Comment[];
 } 
