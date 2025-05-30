@@ -705,6 +705,7 @@ export default function Home() {
                             ) : (
                               <ImageKitUpload
                                 key={`upload-comment-${item.id}-${Date.now()}`}
+                                itemId={`comment-${item.id}`}
                                 onUpload={(result) => {
                                   console.log('Photo uploaded for comment on item:', item.id, result);
                                   setCommentPhoto({
