@@ -19,6 +19,8 @@ export default function Home() {
   const { user, signOut } = useAuth();
   const [items, setItems] = useState<BucketListItem[]>([]);
   const [newItem, setNewItem] = useState({ title: '', description: '' });
+  const [newItemPhoto, setNewItemPhoto] = useState<{ url: string; fileId: string; name: string } | null>(null);
+  const [uploadingNewItem, setUploadingNewItem] = useState(false);
   const [editingItem, setEditingItem] = useState<BucketListItem | null>(null);
   const [loading, setLoading] = useState(true);
   const [newComment, setNewComment] = useState('');
@@ -63,17 +65,30 @@ export default function Home() {
     if (!user) return;
     
     try {
-      await addDoc(collection(db, 'bucketlist'), {
+      const itemData = {
         ...newItem,
         completed: false,
         createdAt: new Date(),
         suggestedBy: user.displayName || user.email || 'Anonymous',
-        suggestedByEmail: user.email
-      });
+        suggestedByEmail: user.email,
+        ...(newItemPhoto && {
+          photoUrl: newItemPhoto.url,
+          photoMetadata: {
+            fileId: newItemPhoto.fileId,
+            uploadedAt: new Date(),
+            uploadedBy: user.email,
+            fileType: newItemPhoto.name.split('.').pop() || 'jpg'
+          }
+        })
+      };
+
+      await addDoc(collection(db, 'bucketlist'), itemData);
       setNewItem({ title: '', description: '' });
+      setNewItemPhoto(null);
       fetchItems();
     } catch (error) {
       console.error('Error adding item:', error);
+      toast.error('Failed to add challenge');
     }
   };
 
@@ -425,26 +440,64 @@ export default function Home() {
         </div>
         
         {/* Add new item form */}
-        <form onSubmit={handleAddItem} className="bg-white p-6 rounded-lg shadow-md mb-8">
-          <h2 className="text-2xl font-semibold mb-4">Add New Challenge</h2>
+        <form onSubmit={handleAddItem} className="bg-white p-6 rounded-lg shadow-md mb-8 border border-gray-200">
+          <h2 className="text-2xl font-semibold mb-4 text-gray-900">Add a post</h2>
           <div className="space-y-4">
             <input
               type="text"
               placeholder="Title"
               value={newItem.title}
               onChange={(e) => setNewItem({ ...newItem, title: e.target.value })}
-              className="w-full p-2 border rounded"
+              className="w-full p-2 border rounded bg-white text-gray-900"
               required
             />
             <textarea
               placeholder="Description"
               value={newItem.description}
               onChange={(e) => setNewItem({ ...newItem, description: e.target.value })}
-              className="w-full p-2 border rounded whitespace-pre-wrap"
+              className="w-full p-2 border rounded whitespace-pre-wrap bg-white text-gray-900"
               required
             />
-            <button type="submit" className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600">
-              Add Challenge
+            <div className="mt-2">
+              {newItemPhoto ? (
+                <div className="relative group mb-2">
+                  <div className="relative w-full h-[200px]">
+                    <Image
+                      src={newItemPhoto.url}
+                      alt="Challenge photo preview"
+                      fill
+                      className="rounded-lg object-cover"
+                      sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
+                      unoptimized
+                    />
+                    <button
+                      onClick={() => setNewItemPhoto(null)}
+                      className="absolute top-2 right-2 bg-red-500 text-white p-2 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                        <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <ImageKitUpload
+                  key={`upload-new-item-${Date.now()}`}
+                  itemId="new-item"
+                  onUpload={(result) => {
+                    console.log('Photo uploaded for new item:', result);
+                    setNewItemPhoto(result);
+                  }}
+                  buttonText="Add Photo"
+                />
+              )}
+            </div>
+            <button 
+              type="submit" 
+              className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
+              disabled={uploadingNewItem}
+            >
+              {uploadingNewItem ? 'Adding Challenge...' : 'Add Challenge'}
             </button>
           </div>
         </form>
